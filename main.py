@@ -4,6 +4,8 @@ from fpdf import FPDF
 from datetime import datetime
 from num2words import num2words
 import urllib.parse
+from PIL import Image
+import io
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="AK Store Manager", layout="wide")
@@ -11,20 +13,19 @@ st.set_page_config(page_title="AK Store Manager", layout="wide")
 # --- INITIALIZE DATABASE (Session State) ---
 if 'suppliers' not in st.session_state: st.session_state.suppliers = []
 if 'customers' not in st.session_state: st.session_state.customers = []
-if 'inventory' not in st.session_state: st.session_state.inventory = []
 if 'purchases' not in st.session_state: st.session_state.purchases = []
 if 'bill_items' not in st.session_state: st.session_state.bill_items = []
+if 'edit_index' not in st.session_state: st.session_state.edit_index = -1
 
 # --- APP HEADER ---
 st.title("AK Store Management System")
 st.markdown("---")
 
-# MAIN HEADS AS TABS
 tab_profile, tab_supp, tab_cust, tab_purch, tab_sale, tab_enq = st.tabs([
     "🏪 Store Profile", "🤝 Suppliers", "👥 Customers", "🛒 Purchase Entry", "🧾 Sale Panel", "📱 Enquiry"
 ])
 
-# --- 1. STORE PROFILE TAB ---
+# --- 1. STORE PROFILE ---
 with tab_profile:
     st.header("Store Configuration")
     col1, col2 = st.columns(2)
@@ -37,7 +38,7 @@ with tab_profile:
         uploaded_logo = st.file_uploader("Upload Store Logo", type=['png', 'jpg', 'jpeg'])
         if uploaded_logo: st.session_state['logo_data'] = uploaded_logo
 
-# --- 2. SUPPLIERS TAB (All Fields Restored) ---
+# --- 2. SUPPLIERS ---
 with tab_supp:
     st.header("Supplier Management")
     with st.form("supp_form", clear_on_submit=True):
@@ -49,24 +50,12 @@ with tab_supp:
         s_addr = col_s2.text_area("Address")
         s_bank = col_s2.text_input("Bank Details")
         s_upi = col_s2.text_input("UPI ID")
-        
         if st.form_submit_button("Save Supplier"):
             if s_store:
-                st.session_state.suppliers.append({
-                    "Store": s_store, "Name": s_name, "C1": s_c1, "C2": s_c2, 
-                    "Addr": s_addr, "Bank": s_bank, "UPI": s_upi
-                })
-                st.success(f"Supplier {s_store} Added!")
+                st.session_state.suppliers.append({"Store": s_store, "Name": s_name, "C1": s_c1, "C2": s_c2, "Addr": s_addr, "Bank": s_bank, "UPI": s_upi})
+                st.success("Supplier Added!")
 
-    if st.session_state.suppliers:
-        df_s = pd.DataFrame(st.session_state.suppliers)
-        st.subheader("Supplier List (Edit/Delete)")
-        st.dataframe(df_s)
-        if st.button("Delete All Suppliers"):
-            st.session_state.suppliers = []
-            st.rerun()
-
-# --- 3. CUSTOMER TAB ---
+# --- 3. CUSTOMERS ---
 with tab_cust:
     st.header("Customer Details")
     with st.form("cust_form", clear_on_submit=True):
@@ -79,157 +68,122 @@ with tab_cust:
             st.session_state.customers.append({"Name": c_name, "A1": c_a1, "A2": c_a2, "Place": c_place, "Phone": c_phone})
             st.success("Customer Saved")
 
-# --- 4. PURCHASE TAB (All Fields Restored) ---
+# --- 4. PURCHASE ENTRY & HISTORY ---
 with tab_purch:
     st.header("Purchase Entry & Inventory")
-    if not st.session_state.suppliers:
-        st.warning("Add a Supplier first!")
-    else:
-        with st.form("pur_form", clear_on_submit=True):
-            col_p1, col_p2 = st.columns(2)
-            p_store = col_p1.selectbox("Select Purchase Store", [s['Store'] for s in st.session_state.suppliers])
-            p_code = col_p1.text_input("Product Code*")
-            p_name = col_p1.text_input("Product Name*")
-            p_price = col_p1.number_input("Product Purchase Price (₹)", min_value=0.0)
-            p_margin = col_p2.number_input("Product Margin Price to Sell (₹)", min_value=0.0)
-            p_disc = col_p2.number_input("Product Discount Price (₹)", min_value=0.0)
-            p_qty = col_p2.number_input("Quantity of Purchase", min_value=1)
-            p_date = col_p2.date_input("Date of Purchase")
-            p_paid = col_p2.number_input("Amount Paid (₹)", min_value=0.0)
-            
-            total_pay = p_qty * p_price
-            balance = total_pay - p_paid
-            
-            if st.form_submit_button("Add Purchase"):
-                purchase_entry = {
-                    "Code": p_code, "Name": p_name, "S_Price": p_margin, "Disc": p_disc,
-                    "Qty": p_qty, "Total": total_pay, "Paid": p_paid, "Balance": balance, "Store": p_store
-                }
-                st.session_state.purchases.append(purchase_entry)
-                # Update Inventory for Sale Panel
-                st.session_state.inventory.append(purchase_entry)
-                st.success(f"Added! Balance to Pay: ₹{balance}")
+    
+    # Logic for Editing
+    edit_idx = st.session_state.edit_index
+    edit_data = st.session_state.purchases[edit_idx] if edit_idx != -1 else None
 
-# --- 5. SALE PANEL (Multiple Products + Professional Invoice) ---
+    if not st.session_state.suppliers:
+        st.warning("Please add a Supplier first!")
+    else:
+        # PURCHASE FORM
+        with st.expander("➕ Click to Add / Edit Purchase Entry", expanded=(edit_idx != -1)):
+            with st.form("pur_form", clear_on_submit=(edit_idx == -1)):
+                col_p1, col_p2 = st.columns(2)
+                p_store = col_p1.selectbox("Select Purchase Store", [s['Store'] for s in st.session_state.suppliers], 
+                                           index=0 if not edit_data else [s['Store'] for s in st.session_state.suppliers].index(edit_data['Store']))
+                p_code = col_p1.text_input("Product Code*", value="" if not edit_data else edit_data['Code'])
+                p_name = col_p1.text_input("Product Name*", value="" if not edit_data else edit_data['Name'])
+                p_photo = col_p1.file_uploader("Upload Product Photo", type=['jpg', 'png', 'jpeg'])
+                
+                p_price = col_p2.number_input("Purchase Price (₹)", min_value=0.0, value=0.0 if not edit_data else edit_data['P_Price'])
+                p_margin = col_p2.number_input("Margin Price to Sell (₹)", min_value=0.0, value=0.0 if not edit_data else edit_data['S_Price'])
+                p_disc = col_p2.number_input("Discount Price (₹)", min_value=0.0, value=0.0 if not edit_data else edit_data['Disc'])
+                p_qty = col_p2.number_input("Quantity", min_value=1, value=1 if not edit_data else edit_data['Qty'])
+                p_paid = col_p2.number_input("Amount Paid (₹)", min_value=0.0, value=0.0 if not edit_data else edit_data['Paid'])
+                p_date = col_p2.date_input("Date", datetime.now() if not edit_data else edit_data['Date'])
+                
+                submit_text = "Update Entry" if edit_idx != -1 else "Add Purchase"
+                if st.form_submit_button(submit_text):
+                    total_val = p_qty * p_price
+                    new_entry = {
+                        "Code": p_code, "Name": p_name, "Store": p_store, "P_Price": p_price,
+                        "S_Price": p_margin, "Disc": p_disc, "Qty": p_qty, "Date": p_date,
+                        "Paid": p_paid, "Balance": total_val - p_paid, "Photo": p_photo
+                    }
+                    if edit_idx == -1:
+                        st.session_state.purchases.append(new_entry)
+                        st.success("Entry Added!")
+                    else:
+                        st.session_state.purchases[edit_idx] = new_entry
+                        st.session_state.edit_index = -1 # Reset to Add mode
+                        st.success("Entry Updated!")
+                        st.rerun()
+
+    # PURCHASE HISTORY TABLE
+    st.markdown("---")
+    st.subheader("📦 Purchase History & Inventory")
+    if st.session_state.purchases:
+        for i, item in enumerate(st.session_state.purchases):
+            with st.container():
+                c1, c2, c3, c4, c5 = st.columns([1, 2, 2, 1, 1])
+                # Show Image
+                if item['Photo']:
+                    c1.image(item['Photo'], width=60)
+                else:
+                    c1.write("No Image")
+                
+                c2.write(f"**{item['Name']}** ({item['Code']})\nStore: {item['Store']}")
+                c3.write(f"Qty: {item['Qty']} | Bal: ₹{item['Balance']}\nDate: {item['Date']}")
+                
+                # Edit/Delete Buttons
+                if c4.button("📝 Edit", key=f"edit_{i}"):
+                    st.session_state.edit_index = i
+                    st.rerun()
+                if c5.button("🗑️ Delete", key=f"del_{i}"):
+                    st.session_state.purchases.pop(i)
+                    st.rerun()
+                st.divider()
+
+# --- 5. SALE PANEL ---
 with tab_sale:
-    # Header Layout
+    # Header
     col_l, col_r = st.columns([1, 4])
     with col_l:
         if 'logo_data' in st.session_state: st.image(st.session_state['logo_data'], width=100)
     with col_r:
         st.markdown(f"<h2 style='text-align: center;'>{st.session_state.get('store_name', 'AK STORE')}</h2>", unsafe_allow_html=True)
-        st.markdown(f"<p style='text-align: center;'>{st.session_state.get('store_addr', '')}<br>Contact: {st.session_state.get('store_cont', '')}</p>", unsafe_allow_html=True)
-
+    
     st.divider()
-    
-    # Bill & Customer Info
-    c_col1, c_col2 = st.columns(2)
-    with c_col1:
-        if st.session_state.customers:
-            sel_c = st.selectbox("Select Customer (To Address)", [c['Name'] for c in st.session_state.customers])
-            cust_data = [c for c in st.session_state.customers if c['Name'] == sel_c][0]
-            st.write(f"**TO:** {cust_data['Name']}\n{cust_data['A1']}, {cust_data['A2']}, {cust_data['Place']}")
-        else: st.warning("Add Customers first!")
-    
-    with c_col2:
-        bill_no = st.text_input("Bill Number", f"AK/01/{datetime.now().year}")
-        sale_date = st.date_input("Date", datetime.now())
 
-    # Add Products Row-wise
-    st.subheader("Add Products to Bill")
-    if not st.session_state.inventory:
-        st.info("No stock in inventory. Add via Purchase tab.")
-    else:
-        col_i1, col_i2, col_i3, col_i4 = st.columns([2, 1, 1, 1])
-        item_code = col_i1.selectbox("Select Product Code", [i['Code'] for i in st.session_state.inventory])
-        item_data = [i for i in st.session_state.inventory if i['Code'] == item_code][0]
+    # Selection
+    if st.session_state.customers and st.session_state.purchases:
+        sel_c = st.selectbox("Customer", [c['Name'] for c in st.session_state.customers])
+        cust = [c for c in st.session_state.customers if c['Name'] == sel_c][0]
         
-        col_i1.write(f"Product: **{item_data['Name']}**")
-        s_price = col_i2.number_input("Price (₹)", value=item_data['S_Price'])
-        s_qty = col_i3.number_input("Qty", min_value=1)
-        s_disc = col_i4.number_input("Disc (₹)", value=item_data['Disc'])
+        st.subheader("Add Products")
+        col_s1, col_s2, col_s3 = st.columns([2, 1, 1])
+        item_code = col_s1.selectbox("Product Code", [p['Code'] for p in st.session_state.purchases])
+        item_data = [p for p in st.session_state.purchases if p['Code'] == item_code][0]
         
-        if st.button("➕ Add Product to Row"):
-            total_item = (s_price - s_disc) * s_qty
+        s_qty = col_s2.number_input("Qty to Sell", min_value=1)
+        if col_s3.button("➕ Add Row"):
             st.session_state.bill_items.append({
                 "SN": len(st.session_state.bill_items)+1,
-                "Code": item_code,
-                "Name": item_data['Name'],
-                "Price": s_price,
-                "Disc": s_disc,
-                "Qty": s_qty,
-                "Total": total_item
+                "Name": item_data['Name'], "Price": item_data['S_Price'], 
+                "Qty": s_qty, "Total": item_data['S_Price'] * s_qty
             })
-
-    # Display Table & Totals
-    if st.session_state.bill_items:
-        df_bill = pd.DataFrame(st.session_state.bill_items)
-        st.table(df_bill)
         
-        grand_total = df_bill['Total'].sum()
-        total_before = (df_bill['Price'] * df_bill['Qty']).sum()
-        
-        st.write(f"**Total Before Discount:** ₹{total_before}")
-        st.write(f"### **Final Price: ₹{grand_total}**")
-        words = num2words(grand_total, lang='en_IN').capitalize()
-        st.write(f"**Final Price in Words:** {words} Rupees Only")
-        st.write(f"**Proprietor:** Suraj.M")
+        if st.session_state.bill_items:
+            st.table(pd.DataFrame(st.session_state.bill_items))
+            if st.button("🗑️ Clear Bill"):
+                st.session_state.bill_items = []
+                st.rerun()
+    else:
+        st.info("Please ensure you have added Customers and Purchases first.")
 
-        # PDF GENERATION
-        if st.button("💾 Save Bill as PDF"):
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", 'B', 16)
-            pdf.cell(0, 10, st.session_state['store_name'], ln=True, align='C')
-            pdf.set_font("Arial", size=10)
-            pdf.multi_cell(0, 5, st.session_state['store_addr'], align='C')
-            pdf.ln(10)
-            
-            # To Address
-            pdf.set_font("Arial", 'B', 10)
-            pdf.cell(100, 5, f"TO: {cust_data['Name']}", ln=False)
-            pdf.cell(0, 5, f"Bill No: {bill_no}", ln=True, align='R')
-            pdf.set_font("Arial", size=10)
-            pdf.cell(100, 5, f"{cust_data['A1']}, {cust_data['Place']}", ln=False)
-            pdf.cell(0, 5, f"Date: {sale_date}", ln=True, align='R')
-            pdf.ln(10)
-
-            # Table Header
-            pdf.set_fill_color(230, 230, 230)
-            pdf.cell(10, 8, "SN", 1, 0, 'C', True)
-            pdf.cell(80, 8, "Product Name", 1, 0, 'L', True)
-            pdf.cell(20, 8, "Qty", 1, 0, 'C', True)
-            pdf.cell(30, 8, "Price", 1, 0, 'C', True)
-            pdf.cell(50, 8, "Total", 1, 1, 'C', True)
-            
-            for item in st.session_state.bill_items:
-                pdf.cell(10, 8, str(item['SN']), 1)
-                pdf.cell(80, 8, item['Name'], 1)
-                pdf.cell(20, 8, str(item['Qty']), 1)
-                pdf.cell(30, 8, str(item['Price']), 1)
-                pdf.cell(50, 8, str(item['Total']), 1, 1)
-            
-            pdf.ln(10)
-            pdf.set_font("Arial", 'B', 12)
-            pdf.cell(0, 10, f"Final Price: Rs. {grand_total}", ln=True)
-            pdf.set_font("Arial", 'I', 10)
-            pdf.cell(0, 10, f"In Words: {words} Rupees Only", ln=True)
-            pdf.ln(10)
-            pdf.cell(0, 10, "Proprietor: Suraj.M", ln=True, align='R')
-            
-            pdf_file = f"Invoice_{bill_no.replace('/','_')}.pdf"
-            pdf.output(pdf_file)
-            with open(pdf_file, "rb") as f:
-                st.download_button("Download PDF", f, file_name=pdf_file)
-
-# --- 6. ENQUIRY TAB ---
+# --- 6. ENQUIRY ---
 with tab_enq:
-    st.header("Customer Enquiry")
-    if st.session_state.inventory:
-        e_p = st.selectbox("Select Product", [i['Code'] for i in st.session_state.inventory])
-        e_data = [i for i in st.session_state.inventory if i['Code'] == e_p][0]
-        st.write(f"Product: {e_data['Name']} | Price: ₹{e_data['S_Price']}")
-        e_ph = st.text_input("WhatsApp Number")
-        if st.button("Share on WhatsApp"):
-            msg = f"Product: {e_data['Name']}, Price: ₹{e_data['S_Price']}. Store: {st.session_state['store_name']}"
-            st.markdown(f"[Send Message](https://wa.me/{e_ph}?text={urllib.parse.quote(msg)})")
+    st.header("Enquiry Sharing")
+    if st.session_state.purchases:
+        e_p = st.selectbox("Select Product for Enquiry", [p['Code'] for p in st.session_state.purchases])
+        e_data = [p for p in st.session_state.purchases if p['Code'] == e_p][0]
+        if e_data['Photo']: st.image(e_data['Photo'], width=150)
+        st.write(f"Price: ₹{e_data['S_Price']}")
+        e_ph = st.text_input("WhatsApp No")
+        if st.button("Share"):
+            msg = f"Check out {e_data['Name']} at ₹{e_data['S_Price']}!"
+            st.markdown(f"[Send WhatsApp](https://wa.me/{e_ph}?text={urllib.parse.quote(msg)})")
