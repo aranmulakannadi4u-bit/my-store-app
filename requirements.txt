@@ -1,5 +1,4 @@
 streamlit
 pandas
+fpdf
 num2words
-fpdf2
-Pillow
