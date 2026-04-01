@@ -192,4 +192,44 @@ with tab_sale:
             pdf.set_font("Arial", size=10)
             pdf.cell(100, 5, f"{cust_data['A1']}, {cust_data['Place']}", ln=False)
             pdf.cell(0, 5, f"Date: {sale_date}", ln=True, align='R')
-            pdf.ln(
+            pdf.ln(10)
+
+            # Table Header
+            pdf.set_fill_color(230, 230, 230)
+            pdf.cell(10, 8, "SN", 1, 0, 'C', True)
+            pdf.cell(80, 8, "Product Name", 1, 0, 'L', True)
+            pdf.cell(20, 8, "Qty", 1, 0, 'C', True)
+            pdf.cell(30, 8, "Price", 1, 0, 'C', True)
+            pdf.cell(50, 8, "Total", 1, 1, 'C', True)
+            
+            for item in st.session_state.bill_items:
+                pdf.cell(10, 8, str(item['SN']), 1)
+                pdf.cell(80, 8, item['Name'], 1)
+                pdf.cell(20, 8, str(item['Qty']), 1)
+                pdf.cell(30, 8, str(item['Price']), 1)
+                pdf.cell(50, 8, str(item['Total']), 1, 1)
+            
+            pdf.ln(10)
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(0, 10, f"Final Price: Rs. {grand_total}", ln=True)
+            pdf.set_font("Arial", 'I', 10)
+            pdf.cell(0, 10, f"In Words: {words} Rupees Only", ln=True)
+            pdf.ln(10)
+            pdf.cell(0, 10, "Proprietor: Suraj.M", ln=True, align='R')
+            
+            pdf_file = f"Invoice_{bill_no.replace('/','_')}.pdf"
+            pdf.output(pdf_file)
+            with open(pdf_file, "rb") as f:
+                st.download_button("Download PDF", f, file_name=pdf_file)
+
+# --- 6. ENQUIRY TAB ---
+with tab_enq:
+    st.header("Customer Enquiry")
+    if st.session_state.inventory:
+        e_p = st.selectbox("Select Product", [i['Code'] for i in st.session_state.inventory])
+        e_data = [i for i in st.session_state.inventory if i['Code'] == e_p][0]
+        st.write(f"Product: {e_data['Name']} | Price: ₹{e_data['S_Price']}")
+        e_ph = st.text_input("WhatsApp Number")
+        if st.button("Share on WhatsApp"):
+            msg = f"Product: {e_data['Name']}, Price: ₹{e_data['S_Price']}. Store: {st.session_state['store_name']}"
+            st.markdown(f"[Send Message](https://wa.me/{e_ph}?text={urllib.parse.quote(msg)})")
