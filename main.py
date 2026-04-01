@@ -4,18 +4,15 @@ from fpdf import FPDF
 from datetime import datetime
 from num2words import num2words
 import urllib.parse
-from PIL import Image
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="AK Store Manager", layout="wide")
 
 # --- DATABASE SIMULATION ---
-if 'suppliers' not in st.session_state:
-    st.session_state.suppliers = []
-if 'customers' not in st.session_state:
-    st.session_state.customers = []
-if 'purchases' not in st.session_state:
-    st.session_state.purchases = []
+if 'suppliers' not in st.session_state: st.session_state.suppliers = []
+if 'customers' not in st.session_state: st.session_state.customers = []
+if 'purchases' not in st.session_state: st.session_state.purchases = []
+if 'current_bill_items' not in st.session_state: st.session_state.current_bill_items = []
 
 # --- APP HEADER ---
 st.title("AK Store Management System")
@@ -26,7 +23,7 @@ tab_profile, tab_supp, tab_cust, tab_purch, tab_sale, tab_enq = st.tabs([
     "Store Profile", "Suppliers", "Customers", "Purchase", "Sale Panel", "Enquiry"
 ])
 
-# --- 1. STORE PROFILE (Logo & Details) ---
+# --- 1. STORE PROFILE ---
 with tab_profile:
     st.header("Store Details")
     col1, col2 = st.columns(2)
@@ -35,185 +32,193 @@ with tab_profile:
         st.session_state['store_address'] = st.text_area("Store Address", "Shop No 1, Main Road, City")
         st.session_state['store_contact'] = st.text_input("Store Contact Number", "91XXXXXXXX")
     with col2:
-        st.session_state['store_font'] = st.selectbox("Select Invoice Font", ["Arial", "Courier", "Times"])
         uploaded_logo = st.file_uploader("Upload Store Logo", type=['png', 'jpg', 'jpeg'])
-        if uploaded_logo:
-            st.session_state['logo_data'] = uploaded_logo
-            st.image(uploaded_logo, width=150)
+        if uploaded_logo: st.session_state['logo_data'] = uploaded_logo
 
-# --- 2. SUPPLIERS ---
+# --- 2. SUPPLIERS & 3. CUSTOMERS (Simplified for brevity) ---
 with tab_supp:
-    st.header("Add New Supplier")
-    with st.form("supp_form", clear_on_submit=True):
-        s_store = st.text_input("Supplier Store Name*")
-        s_name = st.text_input("Supplier Person Name")
-        s_c1 = st.text_input("Contact 1")
-        s_bank = st.text_input("Bank Details")
-        s_upi = st.text_input("UPI ID")
-        if st.form_submit_button("Save Supplier"):
-            if s_store:
-                st.session_state.suppliers.append({"Store": s_store, "Name": s_name, "UPI": s_upi})
-                st.success(f"Supplier {s_store} Saved!")
+    st.header("Add Supplier")
+    s_store = st.text_input("Supplier Store Name")
+    if st.button("Save Supplier"):
+        st.session_state.suppliers.append(s_store)
+        st.success("Saved")
 
-# --- 3. CUSTOMER TAB (NEW) ---
 with tab_cust:
-    st.header("Customer Management")
-    with st.form("cust_form", clear_on_submit=True):
-        c_name = st.text_input("Customer Name*")
-        c_addr1 = st.text_input("Address Line 1")
-        c_addr2 = st.text_input("Address Line 2")
-        c_place = st.text_input("Place/City")
-        c_phone = st.text_input("Contact Number")
-        
+    st.header("Add Customer")
+    with st.form("c_form"):
+        c_name = st.text_input("Customer Name")
+        c_a1 = st.text_input("Address Line 1")
+        c_a2 = st.text_input("Address Line 2")
+        c_place = st.text_input("Place")
+        c_phone = st.text_input("Contact")
         if st.form_submit_button("Save Customer"):
-            if c_name and c_phone:
-                st.session_state.customers.append({
-                    "Name": c_name,
-                    "Addr1": c_addr1,
-                    "Addr2": c_addr2,
-                    "Place": c_place,
-                    "Phone": c_phone
-                })
-                st.success(f"Customer {c_name} Added!")
-            else:
-                st.error("Name and Contact are required!")
-    
-    if st.session_state.customers:
-        st.subheader("Customer List")
-        st.table(pd.DataFrame(st.session_state.customers))
+            st.session_state.customers.append({"Name": c_name, "Addr1": c_a1, "Addr2": c_a2, "Place": c_place, "Phone": c_phone})
+            st.success("Customer Added")
 
-# --- 4. PURCHASE TAB ---
+# --- 4. PURCHASE ---
 with tab_purch:
     st.header("Purchase Entry")
-    if not st.session_state.suppliers:
-        st.warning("Please add a Supplier first!")
-    else:
-        with st.form("pur_form"):
-            p_supp = st.selectbox("Select Supplier", [s['Store'] for s in st.session_state.suppliers])
-            p_code = st.text_input("Product Code*")
-            p_name = st.text_input("Product Name*")
-            p_qty = st.number_input("Quantity", min_value=1)
-            p_cost = st.number_input("Purchase Price (₹)", min_value=0.0)
-            p_paid = st.number_input("Amount Paid (₹)", min_value=0.0)
-            p_date = st.date_input("Purchase Date")
-            
-            total_cost = p_qty * p_cost
-            balance = total_cost - p_paid
-            
-            if st.form_submit_button("Save Purchase"):
-                st.session_state.purchases.append({
-                    "Code": p_code, "Name": p_name, "Qty": p_qty, "Total": total_cost, "Balance": balance
-                })
-                st.success(f"Purchase Saved! Balance: ₹{balance}")
+    with st.form("p_form"):
+        p_code = st.text_input("Product Code")
+        p_name = st.text_input("Product Name")
+        p_m_price = st.number_input("Selling Price (Margin Price)", min_value=0.0)
+        if st.form_submit_button("Save Product"):
+            st.session_state.purchases.append({"Code": p_code, "Name": p_name, "Price": p_m_price})
+            st.success("Product Saved to Inventory")
 
-# --- 5. SALE PANEL (Logo & To Address Fixed) ---
+# --- 5. SALE PANEL (PROFESSIONAL MULTI-PRODUCT) ---
 with tab_sale:
-    st.header("Invoice Generation")
-    
-    # 1. Logo Display (Left Side)
-    col_logo, col_shop = st.columns([1, 3])
-    with col_logo:
-        if 'logo_data' in st.session_state:
-            st.image(st.session_state['logo_data'], width=120)
-        else:
-            st.write("[No Logo]")
-    
-    with col_shop:
+    # --- INVOICE HEADER VIEW ---
+    col_l, col_r = st.columns([1, 3])
+    with col_l:
+        if 'logo_data' in st.session_state: st.image(st.session_state['logo_data'], width=100)
+    with col_r:
         st.subheader(st.session_state.get('store_name', 'AK Store'))
-        st.write(st.session_state.get('store_address', 'Address not set'))
+        st.write(st.session_state.get('store_address', ''))
 
     st.divider()
 
-    # 2. To Address Selection
-    if not st.session_state.customers:
-        st.warning("Please add a Customer in the 'Customers' tab first!")
-    else:
-        c_options = {c['Name']: c for c in st.session_state.customers}
-        selected_c_name = st.selectbox("Select Customer (To Address)", options=list(c_options.keys()))
-        cust = c_options[selected_c_name]
-        
-        # Displaying the "To Address" on Screen
-        st.markdown(f"""
-        **TO:**  
-        {cust['Name']}  
-        {cust['Addr1']}, {cust['Addr2']}  
-        {cust['Place']}  
-        Contact: {cust['Phone']}
-        """)
+    # Customer & Bill Info
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.session_state.customers:
+            cust_list = {c['Name']: c for c in st.session_state.customers}
+            sel_c = st.selectbox("Select Customer (To Address)", options=list(cust_list.keys()))
+            customer = cust_list[sel_c]
+            st.info(f"**TO:** {customer['Name']}, {customer['Addr1']}, {customer['Place']}")
+        else:
+            st.warning("Add a customer first!")
+    
+    with c2:
+        bill_no = st.text_input("Bill Number", f"AK/{len(st.session_state.get('sales_history', []))+1:02d}/{datetime.now().year}")
+        bill_date = st.date_input("Bill Date", datetime.now())
 
-        # Bill Details
-        bill_year = datetime.now().year
-        bill_no = st.text_input("Bill Number", f"AK/01/{bill_year}")
+    st.divider()
+
+    # --- PRODUCT SELECTION AREA ---
+    st.subheader("Add Products to Bill")
+    if st.session_state.purchases:
+        prod_list = {p['Code']: p for p in st.session_state.purchases}
+        col_p1, col_p2, col_p3, col_p4 = st.columns([2,1,1,1])
         
-        # Product Selection (from Purchase)
-        if st.session_state.purchases:
-            p_options = {p['Code']: p for p in st.session_state.purchases}
-            sel_p_code = st.selectbox("Select Product Code", options=list(p_options.keys()))
-            sel_p = p_options[sel_p_code]
-            
-            sale_price = st.number_input("Sale Price (₹)", value=100.0)
-            sale_qty = st.number_input("Qty", min_value=1)
-            total_bill = sale_price * sale_qty
-            
-            st.write(f"### Final Price: ₹{total_bill}")
+        with col_p1:
+            sel_p_code = st.selectbox("Select Product", options=list(prod_list.keys()))
+            sel_p_name = prod_list[sel_p_code]['Name']
+            st.caption(f"Name: {sel_p_name}")
+        
+        with col_p2:
+            u_price = st.number_input("Price (₹)", value=prod_list[sel_p_code]['Price'])
+        
+        with col_p3:
+            u_qty = st.number_input("Quantity", min_value=1, step=1)
+        
+        with col_p4:
+            u_disc = st.number_input("Discount per Unit (₹)", min_value=0.0)
+
+        if st.button("➕ Add Item to Bill"):
+            total_item = (u_price - u_disc) * u_qty
+            st.session_state.current_bill_items.append({
+                "SN": len(st.session_state.current_bill_items) + 1,
+                "Code": sel_p_code,
+                "Name": sel_p_name,
+                "Price": u_price,
+                "Discount": u_disc,
+                "Qty": u_qty,
+                "Total": total_item
+            })
+    
+    # --- BILL TABLE VIEW ---
+    if st.session_state.current_bill_items:
+        df_bill = pd.DataFrame(st.session_state.current_bill_items)
+        st.table(df_bill)
+
+        # Totals Calculation
+        grand_total = df_bill['Total'].sum()
+        total_before_disc = (df_bill['Price'] * df_bill['Qty']).sum()
+        
+        c_t1, c_t2 = st.columns(2)
+        with c_t2:
+            st.write(f"**Total Before Discount:** ₹{total_before_disc}")
+            st.markdown(f"## **Final Price: ₹{grand_total}**")
+            words = num2words(grand_total, lang='en_IN').capitalize()
+            st.write(f"*In Words: {words} Rupees Only*")
+        
+        with c_t1:
+            st.write("")
+            st.write("")
             st.write(f"**Proprietor:** Suraj.M")
+            if st.button("🗑️ Clear Bill"):
+                st.session_state.current_bill_items = []
+                st.rerun()
 
-            # PDF GENERATION
-            if st.button("Generate & Download Bill"):
-                pdf = FPDF()
-                pdf.add_page()
-                
-                # Header
-                pdf.set_font("Arial", 'B', 16)
-                pdf.cell(0, 10, st.session_state['store_name'], ln=True, align='C')
-                pdf.set_font("Arial", size=10)
-                pdf.multi_cell(0, 5, st.session_state['store_address'], align='C')
-                pdf.ln(5)
-                
-                # To Address in PDF
-                pdf.set_font("Arial", 'B', 11)
-                pdf.cell(0, 10, "TO (Customer Details):", ln=True)
-                pdf.set_font("Arial", size=10)
-                pdf.cell(0, 5, f"Name: {cust['Name']}", ln=True)
-                pdf.cell(0, 5, f"Address: {cust['Addr1']}, {cust['Addr2']}", ln=True)
-                pdf.cell(0, 5, f"Place: {cust['Place']}", ln=True)
-                pdf.cell(0, 5, f"Contact: {cust['Phone']}", ln=True)
-                
-                pdf.ln(10)
-                pdf.cell(0, 10, f"Bill No: {bill_no} | Date: {datetime.now().strftime('%d-%m-%Y')}", ln=True)
-                pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-                
-                # Item Table
-                pdf.ln(5)
-                pdf.cell(80, 10, "Product Name", 1)
-                pdf.cell(30, 10, "Qty", 1)
-                pdf.cell(40, 10, "Price", 1)
-                pdf.cell(40, 10, "Total", 1, ln=True)
-                
-                pdf.cell(80, 10, sel_p['Name'], 1)
-                pdf.cell(30, 10, str(sale_qty), 1)
-                pdf.cell(40, 10, str(sale_price), 1)
-                pdf.cell(40, 10, str(total_bill), 1, ln=True)
-                
-                # Total in Words
-                pdf.ln(10)
-                words = num2words(total_bill, lang='en_IN').capitalize()
-                pdf.set_font("Arial", 'B', 11)
-                pdf.cell(0, 10, f"Total Amount: Rs. {total_bill} ({words} Rupees Only)", ln=True)
-                
-                pdf.ln(20)
-                pdf.cell(0, 10, "Proprietor: Suraj.M", ln=True, align='R')
-                
-                file_name = f"Bill_{bill_no.replace('/','_')}.pdf"
-                pdf.output(file_name)
-                with open(file_name, "rb") as f:
-                    st.download_button("Download PDF", f, file_name=file_name)
+        # --- GENERATE PDF ---
+        if st.button("📄 Save & Download Invoice (PDF)"):
+            pdf = FPDF()
+            pdf.add_page()
+            
+            # Professional Header
+            pdf.set_font("Arial", 'B', 16)
+            pdf.cell(0, 10, st.session_state['store_name'], ln=True, align='C')
+            pdf.set_font("Arial", size=10)
+            pdf.cell(0, 5, st.session_state['store_address'], ln=True, align='C')
+            pdf.ln(10)
+            
+            # Customer Details
+            pdf.set_font("Arial", 'B', 10)
+            pdf.cell(100, 5, "TO (CUSTOMER):", ln=False)
+            pdf.cell(0, 5, f"BILL NO: {bill_no}", ln=True, align='R')
+            pdf.set_font("Arial", size=10)
+            pdf.cell(100, 5, customer['Name'], ln=False)
+            pdf.cell(0, 5, f"DATE: {bill_date}", ln=True, align='R')
+            pdf.cell(100, 5, f"{customer['Addr1']}, {customer['Place']}", ln=True)
+            pdf.cell(100, 5, f"Contact: {customer['Phone']}", ln=True)
+            pdf.ln(5)
+            
+            # Table Header
+            pdf.set_fill_color(240, 240, 240)
+            pdf.set_font("Arial", 'B', 9)
+            pdf.cell(10, 8, "SN", 1, 0, 'C', True)
+            pdf.cell(80, 8, "Product Description", 1, 0, 'L', True)
+            pdf.cell(25, 8, "Price", 1, 0, 'C', True)
+            pdf.cell(20, 8, "Qty", 1, 0, 'C', True)
+            pdf.cell(20, 8, "Disc", 1, 0, 'C', True)
+            pdf.cell(35, 8, "Total", 1, 1, 'C', True)
+            
+            # Table Body
+            pdf.set_font("Arial", size=9)
+            for item in st.session_state.current_bill_items:
+                pdf.cell(10, 8, str(item['SN']), 1, 0, 'C')
+                pdf.cell(80, 8, item['Name'], 1, 0, 'L')
+                pdf.cell(25, 8, str(item['Price']), 1, 0, 'C')
+                pdf.cell(20, 8, str(item['Qty']), 1, 0, 'C')
+                pdf.cell(20, 8, str(item['Discount']), 1, 0, 'C')
+                pdf.cell(35, 8, str(item['Total']), 1, 1, 'C')
+            
+            # Footer
+            pdf.ln(5)
+            pdf.set_font("Arial", 'B', 10)
+            pdf.cell(155, 8, "Grand Total:", 0, 0, 'R')
+            pdf.cell(35, 8, f"Rs. {grand_total}", 1, 1, 'C')
+            pdf.set_font("Arial", 'I', 9)
+            pdf.cell(0, 10, f"Amount in words: {words} Rupees Only", ln=True)
+            
+            pdf.ln(10)
+            pdf.set_font("Arial", 'B', 10)
+            pdf.cell(0, 10, "For " + st.session_state['store_name'], ln=True, align='R')
+            pdf.ln(5)
+            pdf.cell(0, 10, "Authorized Signatory (Suraj.M)", ln=True, align='R')
+
+            file_name = f"Bill_{bill_no.replace('/', '_')}.pdf"
+            pdf.output(file_name)
+            with open(file_name, "rb") as f:
+                st.download_button("Click to Download PDF", f, file_name=file_name)
 
 # --- 6. ENQUIRY ---
 with tab_enq:
-    st.header("WhatsApp Enquiry")
-    e_phone = st.text_input("Customer WhatsApp (e.g. 91999...)")
-    e_msg = st.text_area("Message", "Hello, the price of the product is...")
-    if st.button("Send WhatsApp"):
-        encoded_msg = urllib.parse.quote(e_msg)
-        st.markdown(f"[Click to Chat](https://wa.me/{e_phone}?text={encoded_msg})")
+    st.header("WhatsApp Sharing")
+    if st.session_state.purchases:
+        e_p = st.selectbox("Product for Enquiry", [p['Name'] for p in st.session_state.purchases])
+        e_ph = st.text_input("WhatsApp Number")
+        if st.button("Share"):
+            msg = f"Check out {e_p} at {st.session_state['store_name']}!"
+            st.markdown(f"[Send WhatsApp](https://wa.me/{e_ph}?text={urllib.parse.quote(msg)})")
