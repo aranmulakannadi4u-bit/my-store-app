@@ -2,4 +2,4 @@ streamlit
 pandas
 num2words
 fpdf2
-pillows
+Pillow
